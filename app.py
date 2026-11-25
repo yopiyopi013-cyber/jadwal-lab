@@ -1,8 +1,12 @@
 import streamlit as st
 import datetime
 import pandas as pd
+import requests
+import time
 
 st.set_page_config(page_title="Booking Lab Komputer 4 IBM", page_icon="💻", layout="wide")
+PASSWORD_ADMIN = "admin123"
+SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5Fvgn134jxIHddk8AfMKjgj_-SouPQfyHmKT709_RWOiLUgca3mxepqXYv3iLqwZwqA/exec"
 
 st.markdown("""
 <style>
@@ -21,13 +25,21 @@ JAM_LIST = [
 ]
 HARI_ID = ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"]
 
-if "booking" not in st.session_state:
-    st.session_state.booking = [
-        {"Tanggal": 1, "Hari": "Selasa", "Jam": "Jam ke-1", "Waktu": "07.00 - 07.40", "Kelas": "X-1", "Pelajaran": "Informatika", "Guru": "Bpk. Ahmad", "Materi": "Pengenalan Lab"},
-    ]
+def load_data():
+    try:
+        r = requests.get(SCRIPT_URL, timeout=10)
+        data = r.json()
+        out = []
+        for b in data:
+            out.append({"Tanggal": int(b.get("Tanggal", 0)), "Hari": b.get("Hari",""), "Jam": b.get("Jam",""), "Waktu": b.get("Waktu",""), "Kelas": b.get("Kelas",""), "Pelajaran": b.get("Pelajaran",""), "Guru": b.get("Guru",""), "Materi": b.get("Materi",""), "_row": b.get("_row", 0)})
+        return out
+    except:
+        return []
+
+booking = load_data()
 
 st.markdown("### 📝 FORM BOOKING - GURU ISI DI SINI")
-with st.form("form_booking"):
+with st.form("form_booking", clear_on_submit=True):
     c1, c2, c3 = st.columns(3)
     with c1:
         tanggal = st.selectbox("📅 Tanggal", list(range(1, 32)), format_func=lambda x: f"{x} Desember 2026 - {HARI_ID[datetime.date(2026,12,x).weekday()]}")
@@ -46,25 +58,57 @@ with st.form("form_booking"):
     if tombol:
         if hari == "Jumat":
             st.error("Maaf, Hari Jumat Libur!")
-        elif not kelas or not guru:
-            st.warning("Kelas dan Guru wajib diisi!")
+        elif not kelas or not guru or not pelajaran:
+            st.warning("Kelas, Pelajaran, dan Guru wajib diisi!")
         else:
-            bentrok = [b for b in st.session_state.booking if b["Tanggal"]==tanggal and b["Jam"]==jam_pilih]
+            bentrok = [b for b in booking if b["Tanggal"]==tanggal and b["Jam"]==jam_pilih]
             if bentrok:
                 st.error(f"❌ SUDAH DIBOOKING! Tanggal {tanggal} {jam_pilih} sudah dipakai kelas {bentrok[0]['Kelas']} oleh {bentrok[0]['Guru']}.")
             else:
-                st.session_state.booking.append({"Tanggal": tanggal, "Hari": hari, "Jam": jam_pilih, "Waktu": waktu, "Kelas": kelas, "Pelajaran": pelajaran, "Guru": guru, "Materi": materi})
-                st.success(f"✅ Berhasil! {kelas} tanggal {tanggal} Desember {jam_pilih} sudah dibooking.")
+                try:
+                    requests.post(SCRIPT_URL, json={"action":"add","Tanggal":tanggal,"Hari":hari,"Jam":jam_pilih,"Waktu":waktu,"Kelas":kelas,"Pelajaran":pelajaran,"Guru":guru,"Materi":materi}, timeout=10)
+                    st.success(f"✅ Berhasil! {kelas} tanggal {tanggal} Desember {jam_pilih} sudah dibooking dan tersimpan permanen.")
+                    time.sleep(1)
+                    st.rerun()
+                except:
+                    st.error("Gagal simpan, coba lagi.")
 
 st.markdown("---")
 st.markdown("### 📋 JADWAL YANG SUDAH DIBOOKING")
 cari = st.text_input("🔍 Cari Kelas / Guru / Pelajaran...", "")
-df = pd.DataFrame(st.session_state.booking).sort_values(["Tanggal", "Jam"]) if st.session_state.booking else pd.DataFrame(columns=["Tanggal","Hari","Jam","Waktu","Kelas","Pelajaran","Guru","Materi"])
-if cari:
-    df = df[df.apply(lambda r: cari.lower() in str(r.values).lower(), axis=1)]
-if len(df) > 0:
+if len(booking) == 0:
+    st.info("📭 Jadwal masih KOSONG. Belum ada yang booking.")
+else:
+    df = pd.DataFrame(booking).sort_values(["Tanggal", "Jam"])
+    if cari:
+        df = df[df.apply(lambda r: cari.lower() in str(r.values).lower(), axis=1)]
     df_tampil = df.copy()
     df_tampil["Tanggal"] = df_tampil["Tanggal"].apply(lambda x: f"{x} Desember 2026")
-    st.dataframe(df_tampil, use_container_width=True, hide_index=True)
+    df_tampil["Status"] = "✅ TERISI"
+    st.dataframe(df_tampil[["Tanggal","Hari","Jam","Waktu","Kelas","Pelajaran","Guru","Materi","Status"]], use_container_width=True, hide_index=True)
+
+st.markdown("---")
+st.markdown("### 🔐 HAPUS BOOKING - KHUSUS ADMIN (PEMBATALAN)")
+if len(booking) == 0:
+    st.write("Tidak ada jadwal untuk dihapus.")
 else:
-    st.info("Belum ada booking.")
+    pilihan_list = [f"{b['Tanggal']} Des - {b['Jam']} - {b['Kelas']} - {b['Pelajaran']} - {b['Guru']}" for b in booking]
+    c_hapus1, c_hapus2, c_hapus3 = st.columns([3, 2, 1])
+    with c_hapus1:
+        pilih_hapus = st.selectbox("Pilih jadwal yang mau dibatalkan:", pilihan_list)
+    with c_hapus2:
+        pw = st.text_input("Password Admin", type="password", placeholder="Masukkan password admin")
+    with c_hapus3:
+        st.write("")
+        st.write("")
+        tombol_hapus = st.button("🗑️ HAPUS", type="primary")
+    if tombol_hapus:
+        if pw != PASSWORD_ADMIN:
+            st.error("❌ Password salah! Hanya admin yang bisa menghapus.")
+        else:
+            idx = pilihan_list.index(pilih_hapus)
+            hapus_data = booking[idx]
+            requests.post(SCRIPT_URL, json={"action":"delete","row":hapus_data["_row"]}, timeout=10)
+            st.success(f"✅ Berhasil dibatalkan: {hapus_data['Kelas']} tanggal {hapus_data['Tanggal']} {hapus_data['Jam']}")
+            time.sleep(1)
+            st.rerun()
